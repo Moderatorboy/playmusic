@@ -1,10 +1,80 @@
-<script src="/socket.io/socket.io.js"></script>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Watch Party - Host Control</title>
+    <style>
+        body { margin: 0; font-family: sans-serif; background: #121212; color: white; display: flex; height: 100vh; }
+        
+        /* Video Section */
+        #video-container { flex: 3; display: flex; justify-content: center; align-items: center; border-right: 1px solid #333; position: relative; }
+        iframe { width: 100%; height: 100%; border: none; }
+        
+        /* Blocker for Viewers (Video par click rokne ke liye) */
+        #click-blocker { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; z-index: 10; }
+
+        /* Sidebar (Chat & Controls) */
+        #sidebar { flex: 1; display: flex; flex-direction: column; background: #1e1e1e; min-width: 300px; }
+        
+        /* Status Bar (Role dikhane ke liye) */
+        #status-bar { padding: 10px; background: #000; text-align: center; color: #aaa; font-size: 13px; border-bottom: 1px solid #333; }
+        .role-badge { font-weight: bold; color: #fff; padding: 2px 6px; border-radius: 4px; }
+        .host { background: #e50914; }
+        .viewer { background: #555; }
+        
+        #chat-window { flex-grow: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+        .msg { padding: 5px 10px; background: #333; border-radius: 4px; font-size: 14px; }
+        .sys-msg { color: #f39c12; font-size: 12px; text-align: center; margin: 5px 0; }
+
+        #controls { padding: 15px; background: #252525; border-top: 1px solid #333; }
+        input { width: 65%; padding: 8px; background: #333; border: none; color: white; border-radius: 4px; }
+        button { padding: 8px; cursor: pointer; border: none; border-radius: 4px; color: white; font-weight: bold; }
+        
+        .btn-play { background: #e50914; width: 30%; }
+        .btn-chat { background: #444; width: 30%; }
+        
+        /* Request Button (Sirf Viewer ke liye) */
+        #request-btn { width: 100%; background: #f39c12; margin-top: 10px; display: none; color: black; }
+        
+        .input-group { margin-bottom: 10px; display: flex; justify-content: space-between; }
+    </style>
+</head>
+<body>
+
+    <div id="video-container">
+        <div id="player"></div>
+        <div id="click-blocker"></div> 
+    </div>
+
+    <div id="sidebar">
+        <div id="status-bar">
+            Status: <span id="role-display" class="role-badge viewer">Connecting...</span>
+        </div>
+        
+        <div id="chat-window"></div>
+        
+        <div id="controls">
+            <div id="host-controls" class="input-group">
+                <input type="text" id="videoUrl" placeholder="Paste YouTube Link">
+                <button class="btn-play" onclick="changeVideo()">Play</button>
+            </div>
+            
+            <button id="request-btn" onclick="requestControl()">✋ Request Control</button>
+
+            <div class="input-group" style="margin-top: 15px;">
+                <input type="text" id="chatInput" placeholder="Type message...">
+                <button class="btn-chat" onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
     <script src="https://www.youtube.com/iframe_api"></script>
     <script>
         const socket = io();
         
-        // --- 1. NEW ROOM LOGIC (Ye hai aapka solution) ---
-        
+        // --- 1. SMART ROOM LOGIC ---
         // URL se Room ID check karo
         let roomId = window.location.hash.substring(1);
 
@@ -17,10 +87,9 @@
             window.location.hash = roomId;
         }
         
-        // Ab user ko us specific room mein join karao
         console.log("Joined Room:", roomId);
 
-        // --- NAME LOGIC ---
+        // Name Logic (Aapka wala localStorage fix)
         let storedName = localStorage.getItem('watchPartyUser');
         let username = storedName ? storedName : (prompt("Apna naam batayein:") || "Guest");
         if(!storedName) localStorage.setItem('watchPartyUser', username);
@@ -33,22 +102,22 @@
         socket.on('role-update', (data) => {
             myRole = data.role;
             const badge = document.getElementById('role-display');
-            badge.innerText = myRole; // HTML me id="role-display" hona chahiye
+            badge.innerText = myRole; 
             
             if (myRole === 'Host' || myRole === 'Co-Host') {
-                if(badge) badge.className = "role-badge host";
+                badge.className = "role-badge host";
                 document.getElementById('host-controls').style.display = 'flex';
                 document.getElementById('request-btn').style.display = 'none';
-                document.getElementById('click-blocker').style.display = 'none';
+                document.getElementById('click-blocker').style.display = 'none'; // Click allow karo
             } else {
-                if(badge) badge.className = "role-badge viewer";
+                badge.className = "role-badge viewer";
                 document.getElementById('host-controls').style.display = 'none';
                 document.getElementById('request-btn').style.display = 'block';
-                document.getElementById('click-blocker').style.display = 'block';
+                document.getElementById('click-blocker').style.display = 'block'; // Click block karo
             }
         });
 
-        // --- 3. AUTO SYNC FOR NEW USER (Pichla feature) ---
+        // --- 3. AUTO SYNC FOR NEW USER ---
         
         // Host naye bande ko data bhejega
         socket.on('get-current-state', (data) => {
@@ -78,13 +147,15 @@
         function onYouTubeIframeAPIReady() {
             player = new YT.Player('player', {
                 videoId: 'jfKfPfyJRdk',
-                playerVars: { 'autoplay': 1, 'controls': 1 },
+                playerVars: { 'autoplay': 1, 'controls': 1, 'rel': 0 },
                 events: { 'onStateChange': onPlayerStateChange }
             });
         }
 
         function onPlayerStateChange(event) {
-            if (myRole === 'Viewer') return; // Viewer server ko signal nahi bhejega
+            // Viewer server ko signal nahi bhej sakta
+            if (myRole === 'Viewer') return; 
+            
             if (event.data == 1) {
                 socket.emit('sync-action', { roomId, action: 'play', time: player.getCurrentTime() });
             } else if (event.data == 2) {
@@ -115,8 +186,9 @@
             chatWin.scrollTop = chatWin.scrollHeight;
         });
 
+        // Request Pop-up (Host ke liye)
         socket.on('control-request', (data) => {
-            let grant = confirm(`${data.name} request kar raha hai control ke liye. Allow karein?`);
+            let grant = confirm(`${data.name} control maang raha hai. Allow karein?`);
             if (grant) socket.emit('grant-control', { roomId, targetId: data.id, targetName: data.name });
         });
 
@@ -133,7 +205,7 @@
 
         function requestControl() {
             socket.emit('request-control', roomId);
-            alert("Request sent!");
+            alert("Request Host ko bhej di gayi hai!");
         }
 
         function sendMessage() {
@@ -143,4 +215,11 @@
                 document.getElementById('chatInput').value = "";
             }
         }
+        
+        // Enter key se message bhejo
+        document.getElementById("chatInput").addEventListener("keyup", function(event) {
+            if (event.key === "Enter") sendMessage();
+        });
     </script>
+</body>
+</html>
