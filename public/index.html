@@ -1,89 +1,90 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Watch Party Room</title>
-    <style>
-        body { margin: 0; font-family: sans-serif; background: #121212; color: white; display: flex; height: 100vh; }
-        
-        /* Video Section */
-        #video-container { flex: 3; display: flex; justify-content: center; align-items: center; border-right: 1px solid #333; }
-        iframe { width: 100%; height: 100%; border: none; }
-
-        /* Sidebar (Chat & Controls) */
-        #sidebar { flex: 1; display: flex; flex-direction: column; background: #1e1e1e; min-width: 300px; }
-        
-        #chat-window { flex-grow: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-        .msg { padding: 5px 10px; background: #333; border-radius: 4px; font-size: 14px; }
-        .sys-msg { color: #888; font-size: 12px; text-align: center; }
-
-        #controls { padding: 15px; background: #252525; border-top: 1px solid #333; }
-        input { width: 65%; padding: 8px; background: #333; border: none; color: white; border-radius: 4px; }
-        button { width: 30%; padding: 8px; cursor: pointer; background: #e50914; color: white; border: none; border-radius: 4px; }
-        
-        .input-group { margin-bottom: 10px; display: flex; justify-content: space-between; }
-    </style>
-</head>
-<body>
-
-    <div id="video-container">
-        <div id="player"></div>
-    </div>
-
-    <div id="sidebar">
-        <div id="chat-window"></div>
-        
-        <div id="controls">
-            <div class="input-group">
-                <input type="text" id="videoUrl" placeholder="Paste YouTube Link">
-                <button onclick="changeVideo()">Play</button>
-            </div>
-            
-            <div class="input-group">
-                <input type="text" id="chatInput" placeholder="Type message...">
-                <button onclick="sendMessage()">Send</button>
-            </div>
-        </div>
-    </div>
-
-    <script src="/socket.io/socket.io.js"></script>
+<script src="/socket.io/socket.io.js"></script>
     <script src="https://www.youtube.com/iframe_api"></script>
     <script>
         const socket = io();
         
-        // 1. Room Logic
-        // URL se room ID uthao (eg: localhost:3000/#myroom)
-        let roomId = window.location.hash ? window.location.hash.substring(1) : 'room1';
-        window.location.hash = roomId;
+        // --- 1. NEW ROOM LOGIC (Ye hai aapka solution) ---
         
-        // Pehle check karo ki kya naam save hai?
-let storedName = localStorage.getItem('watchPartyUser');
+        // URL se Room ID check karo
+        let roomId = window.location.hash.substring(1);
 
-let username;
+        if (!roomId) {
+            // Agar koi ID nahi hai (Anjaan aadmi), toh Random ID banao
+            // Jaise: 'room-a1b2c'
+            roomId = "room-" + Math.random().toString(36).substring(2, 7);
+            
+            // URL update karo taaki bande ko pata chale wo naye room mein hai
+            window.location.hash = roomId;
+        }
+        
+        // Ab user ko us specific room mein join karao
+        console.log("Joined Room:", roomId);
 
-if (storedName) {
-    // Agar save hai, toh wahi use karo (Pop-up nahi aayega)
-    username = storedName;
-} else {
-    // Agar nahi hai, toh poocho aur save kar lo
-    username = prompt("Apna naam batayein:") || "User" + Math.floor(Math.random()*100);
-    localStorage.setItem('watchPartyUser', username);
-}
+        // --- NAME LOGIC ---
+        let storedName = localStorage.getItem('watchPartyUser');
+        let username = storedName ? storedName : (prompt("Apna naam batayein:") || "Guest");
+        if(!storedName) localStorage.setItem('watchPartyUser', username);
+        
         socket.emit('join-room', roomId, username);
 
-        // 2. YouTube Player Setup
+        let myRole = 'Viewer'; 
+
+        // --- 2. HOST & ROLE LOGIC ---
+        socket.on('role-update', (data) => {
+            myRole = data.role;
+            const badge = document.getElementById('role-display');
+            badge.innerText = myRole; // HTML me id="role-display" hona chahiye
+            
+            if (myRole === 'Host' || myRole === 'Co-Host') {
+                if(badge) badge.className = "role-badge host";
+                document.getElementById('host-controls').style.display = 'flex';
+                document.getElementById('request-btn').style.display = 'none';
+                document.getElementById('click-blocker').style.display = 'none';
+            } else {
+                if(badge) badge.className = "role-badge viewer";
+                document.getElementById('host-controls').style.display = 'none';
+                document.getElementById('request-btn').style.display = 'block';
+                document.getElementById('click-blocker').style.display = 'block';
+            }
+        });
+
+        // --- 3. AUTO SYNC FOR NEW USER (Pichla feature) ---
+        
+        // Host naye bande ko data bhejega
+        socket.on('get-current-state', (data) => {
+            if (myRole === 'Host' && player && player.getVideoData) {
+                const currentState = {
+                    targetId: data.newUserId,
+                    videoId: player.getVideoData().video_id,
+                    time: player.getCurrentTime(),
+                    state: player.getPlayerState()
+                };
+                socket.emit('send-current-state', currentState);
+            }
+        });
+
+        // Naya banda data receive karega
+        socket.on('sync-state-on-join', (data) => {
+            if (data.videoId) player.loadVideoById(data.videoId);
+            setTimeout(() => {
+                player.seekTo(data.time);
+                if (data.state === 1) player.playVideo();
+                else player.pauseVideo();
+            }, 1000);
+        });
+
+        // --- 4. PLAYER & SOCKETS ---
         var player;
         function onYouTubeIframeAPIReady() {
             player = new YT.Player('player', {
-                videoId: 'jfKfPfyJRdk', // Default Video
+                videoId: 'jfKfPfyJRdk',
                 playerVars: { 'autoplay': 1, 'controls': 1 },
                 events: { 'onStateChange': onPlayerStateChange }
             });
         }
 
         function onPlayerStateChange(event) {
-            // 1=Play, 2=Pause
+            if (myRole === 'Viewer') return; // Viewer server ko signal nahi bhejega
             if (event.data == 1) {
                 socket.emit('sync-action', { roomId, action: 'play', time: player.getCurrentTime() });
             } else if (event.data == 2) {
@@ -91,11 +92,10 @@ if (storedName) {
             }
         }
 
-        // 3. Socket Listeners (Server se signals)
         socket.on('sync-action', (data) => {
             if (data.action === 'play') {
                 let diff = Math.abs(player.getCurrentTime() - data.time);
-                if(diff > 1) player.seekTo(data.time); // Agar time gap jyada hai to sync karo
+                if(diff > 1) player.seekTo(data.time);
                 player.playVideo();
             } else if (data.action === 'pause') {
                 player.pauseVideo();
@@ -115,18 +115,25 @@ if (storedName) {
             chatWin.scrollTop = chatWin.scrollHeight;
         });
 
-        // 4. User Actions
+        socket.on('control-request', (data) => {
+            let grant = confirm(`${data.name} request kar raha hai control ke liye. Allow karein?`);
+            if (grant) socket.emit('grant-control', { roomId, targetId: data.id, targetName: data.name });
+        });
+
+        // --- 5. BUTTON ACTIONS ---
         function changeVideo() {
             let url = document.getElementById('videoUrl').value;
             let videoId = "";
-            // Link se ID nikalne ka logic
             if (url.includes("v=")) videoId = url.split('v=')[1].split('&')[0];
             else if (url.includes("youtu.be/")) videoId = url.split('youtu.be/')[1].split('?')[0];
 
-            if(videoId) {
-                socket.emit('change-video', { roomId, videoId });
-                document.getElementById('videoUrl').value = "";
-            }
+            if(videoId) socket.emit('change-video', { roomId, videoId });
+            document.getElementById('videoUrl').value = "";
+        }
+
+        function requestControl() {
+            socket.emit('request-control', roomId);
+            alert("Request sent!");
         }
 
         function sendMessage() {
@@ -137,5 +144,3 @@ if (storedName) {
             }
         }
     </script>
-</body>
-</html>
