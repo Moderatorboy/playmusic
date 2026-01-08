@@ -6,83 +6,146 @@ const path = require('path');
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Room Data Structure:
+// rooms[roomId] = { host: 'userId123', allowed: ['userId123', 'userId456'] }
 let rooms = {};
+
+// Socket ID se User ID map karne ke liye (Reverse Lookup)
+let socketToUserMap = {}; 
+// User ID se Socket ID dhundne ke liye (Messaging ke liye)
+let userToSocketMap = {};
 
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
-    // --- JOIN ROOM & ROLE ---
-    socket.on('join-room', (roomId, username) => {
+    // --- JOIN ROOM (Updated Logic with UserID) ---
+    // Ab hum sirf roomId aur username nahi, balki 'userId' bhi receive karenge
+    socket.on('join-room', (roomId, username, userId) => {
         socket.join(roomId);
         socket.username = username;
-
-        if (!rooms[roomId]) {
-            rooms[roomId] = { host: socket.id, allowed: [socket.id] };
-            socket.emit('role-update', { role: 'Host' });
-        } else {
-            socket.emit('role-update', { role: 'Viewer' });
-        }
+        socket.userId = userId; // Socket object me ID save kar lo for easy access
         
-        // Host ko bolo naye bande ko update kare
-        if(rooms[roomId]) {
-            io.to(rooms[roomId].host).emit('get-current-state', { newUserId: socket.id });
+        // Maps update karo taaki hum track kar sakein kaunsa socket kiska hai
+        socketToUserMap[socket.id] = userId;
+        userToSocketMap[userId] = socket.id;
+
+        // 1. Agar Room nahi hai -> Create karo (Ye user HOST hai)
+        if (!rooms[roomId]) {
+            rooms[roomId] = { host: userId, allowed: [userId] };
+            socket.emit('role-update', { role: 'Host' });
+            console.log(`Room created: ${roomId} by Host: ${username}`);
+        } 
+        // 2. Agar Room hai aur ye banda HOST hai (Refresh karke wapas aaya hai)
+        else if (rooms[roomId].host === userId) {
+            socket.emit('role-update', { role: 'Host' });
+            console.log(`Host returned: ${username}`);
+        }
+        // 3. Agar Room hai aur ye banda allowed list me hai (Co-Host)
+        else if (rooms[roomId].allowed.includes(userId)) {
+            socket.emit('role-update', { role: 'Co-Host' });
+        }
+        // 4. Normal User -> Viewer
+        else {
+            socket.emit('role-update', { role: 'Viewer' });
+            
+            // Host ko bolo naye bande ko time/video detail bheje
+            const hostUserId = rooms[roomId].host;
+            const hostSocketId = userToSocketMap[hostUserId];
+            
+            // Agar Host online hai, tabhi usse signal maango
+            if(hostSocketId) {
+                io.to(hostSocketId).emit('get-current-state', { newSocketId: socket.id });
+            }
         }
 
         socket.to(roomId).emit('receive-message', { user: 'System', msg: `${username} ne join kiya.` });
     });
 
-    // --- VIDEO CHANGE (Strictly Host/Allowed Only) ---
+    // --- HELPER FUNCTION: Permission Check ---
+    function canControl(roomId, userId) {
+        if (!rooms[roomId]) return false;
+        return rooms[roomId].allowed.includes(userId);
+    }
+
+    // --- VIDEO CHANGE (Strictly Allowed Only) ---
     socket.on('change-video', (data) => {
-        // Check karo permission hai ya nahi
-        if (rooms[data.roomId] && rooms[data.roomId].allowed.includes(socket.id)) {
+        // Permission Check: User ID use karo, Socket ID nahi
+        if (canControl(data.roomId, socket.userId)) {
             io.in(data.roomId).emit('change-video', data.videoId);
             
-            // Chat mein batao
             io.in(data.roomId).emit('receive-message', { 
                 user: 'System', 
-                msg: `Video change kiya gaya hai.` 
+                msg: 'Video change kiya gaya hai.' 
             });
+        } else {
+            console.log("Unauthorized change attempt by:", socket.username);
         }
     });
 
-    // --- NEW LOGIC: SYNC ON PLAY ---
-    // 1. Viewer Play dabata hai toh wo server se puchta hai: "Host kahan hai?"
+    // --- SYNC LOGIC (Play/Pause is Personal, Sync on request) ---
+    
+    // 1. Viewer Play dabata hai -> Host se Time maango
     socket.on('request-host-time', (roomId) => {
         if(rooms[roomId]) {
-            // Server Host ko signal bhejta hai
-            io.to(rooms[roomId].host).emit('provide-time-for-viewer', { requesterId: socket.id });
+            const hostUserId = rooms[roomId].host;
+            const hostSocketId = userToSocketMap[hostUserId];
+            
+            if (hostSocketId) {
+                io.to(hostSocketId).emit('provide-time-for-viewer', { requesterId: socket.id });
+            }
         }
     });
 
-    // 2. Host time bhejta hai
+    // 2. Host time bhejta hai -> Viewer ko forward karo
     socket.on('host-sends-time', (data) => {
-        // Data: { requesterId, time, state }
-        // Server wo time Viewer ko deta hai
         io.to(data.requesterId).emit('jump-to-live', data.time);
     });
 
-    // --- PERMISSION / HAND RAISE SYSTEM ---
+    // 3. Initial Sync (Jab koi naya aata hai)
+    socket.on('send-current-state', (data) => {
+        io.to(data.targetSocketId).emit('sync-state-on-join', data);
+    });
+
+    // --- HAND RAISE & APPROVAL ---
     socket.on('request-control', (roomId) => {
         if (rooms[roomId]) {
-            io.to(rooms[roomId].host).emit('control-request', { id: socket.id, name: socket.username });
+            const hostUserId = rooms[roomId].host;
+            const hostSocketId = userToSocketMap[hostUserId];
+            
+            if(hostSocketId) {
+                io.to(hostSocketId).emit('control-request', { id: socket.userId, name: socket.username });
+            }
         }
     });
 
     socket.on('grant-control', (data) => {
-        if (rooms[data.roomId] && rooms[data.roomId].host === socket.id) {
-            rooms[data.roomId].allowed.push(data.targetId);
-            io.to(data.targetId).emit('role-update', { role: 'Co-Host' });
-            io.in(data.roomId).emit('receive-message', { user: 'System', msg: `${data.targetName} ab video change kar sakta hai.` });
+        // Data: { roomId, targetUserId, targetName }
+        if (rooms[data.roomId] && rooms[data.roomId].host === socket.userId) {
+            // Allowed list mein User ID add karo
+            rooms[data.roomId].allowed.push(data.targetUserId);
+            
+            // Us user ko batao ki wo Co-Host ban gaya
+            const targetSocketId = userToSocketMap[data.targetUserId];
+            if (targetSocketId) {
+                io.to(targetSocketId).emit('role-update', { role: 'Co-Host' });
+            }
+            
+            io.in(data.roomId).emit('receive-message', { 
+                user: 'System', 
+                msg: `${data.targetName} ko video control mil gaya hai.` 
+            });
         }
     });
 
+    // --- CHAT (Sabke liye open) ---
     socket.on('send-message', (data) => {
         io.in(data.roomId).emit('receive-message', data);
     });
     
-    // Initial Load Sync
-    socket.on('send-current-state', (data) => {
-        io.to(data.targetId).emit('sync-state-on-join', data);
+    // --- DISCONNECT ---
+    socket.on('disconnect', () => {
+        // Optional: Clean up maps if needed, but keeping them allows reconnects
+        // console.log('User disconnected');
     });
 });
 
