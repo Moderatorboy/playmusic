@@ -57,7 +57,19 @@
         let roomId = window.location.hash ? window.location.hash.substring(1) : 'room1';
         window.location.hash = roomId;
         
-        let username = prompt("Apna naam batayein:") || "User" + Math.floor(Math.random()*100);
+        // Pehle check karo ki kya naam save hai?
+let storedName = localStorage.getItem('watchPartyUser');
+
+let username;
+
+if (storedName) {
+    // Agar save hai, toh wahi use karo (Pop-up nahi aayega)
+    username = storedName;
+} else {
+    // Agar nahi hai, toh poocho aur save kar lo
+    username = prompt("Apna naam batayein:") || "User" + Math.floor(Math.random()*100);
+    localStorage.setItem('watchPartyUser', username);
+}
         socket.emit('join-room', roomId, username);
 
         // 2. YouTube Player Setup
