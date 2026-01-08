@@ -3,40 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Watch Party - Host Control</title>
+    <title>Live Watch Party</title>
     <style>
+        /* CSS Same as before */
         body { margin: 0; font-family: sans-serif; background: #121212; color: white; display: flex; height: 100vh; }
-        
-        /* Video Section */
         #video-container { flex: 3; display: flex; justify-content: center; align-items: center; border-right: 1px solid #333; position: relative; }
         iframe { width: 100%; height: 100%; border: none; }
-        
-        /* Blocker for Viewers (Video par click rokne ke liye) */
         #click-blocker { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; z-index: 10; }
-
-        /* Sidebar (Chat & Controls) */
         #sidebar { flex: 1; display: flex; flex-direction: column; background: #1e1e1e; min-width: 300px; }
-        
-        /* Status Bar (Role dikhane ke liye) */
         #status-bar { padding: 10px; background: #000; text-align: center; color: #aaa; font-size: 13px; border-bottom: 1px solid #333; }
         .role-badge { font-weight: bold; color: #fff; padding: 2px 6px; border-radius: 4px; }
         .host { background: #e50914; }
         .viewer { background: #555; }
-        
         #chat-window { flex-grow: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
         .msg { padding: 5px 10px; background: #333; border-radius: 4px; font-size: 14px; }
         .sys-msg { color: #f39c12; font-size: 12px; text-align: center; margin: 5px 0; }
-
         #controls { padding: 15px; background: #252525; border-top: 1px solid #333; }
         input { width: 65%; padding: 8px; background: #333; border: none; color: white; border-radius: 4px; }
         button { padding: 8px; cursor: pointer; border: none; border-radius: 4px; color: white; font-weight: bold; }
-        
         .btn-play { background: #e50914; width: 30%; }
         .btn-chat { background: #444; width: 30%; }
-        
-        /* Request Button (Sirf Viewer ke liye) */
         #request-btn { width: 100%; background: #f39c12; margin-top: 10px; display: none; color: black; }
-        
         .input-group { margin-bottom: 10px; display: flex; justify-content: space-between; }
     </style>
 </head>
@@ -44,23 +31,19 @@
 
     <div id="video-container">
         <div id="player"></div>
-        <div id="click-blocker"></div> 
-    </div>
+        </div>
 
     <div id="sidebar">
         <div id="status-bar">
             Status: <span id="role-display" class="role-badge viewer">Connecting...</span>
         </div>
-        
         <div id="chat-window"></div>
-        
         <div id="controls">
             <div id="host-controls" class="input-group">
                 <input type="text" id="videoUrl" placeholder="Paste YouTube Link">
-                <button class="btn-play" onclick="changeVideo()">Play</button>
+                <button class="btn-play" onclick="changeVideo()">Change Video</button>
             </div>
-            
-            <button id="request-btn" onclick="requestControl()">✋ Request Control</button>
+            <button id="request-btn" onclick="requestControl()">✋ Raise Hand (To Change Video)</button>
 
             <div class="input-group" style="margin-top: 15px;">
                 <input type="text" id="chatInput" placeholder="Type message...">
@@ -73,23 +56,12 @@
     <script src="https://www.youtube.com/iframe_api"></script>
     <script>
         const socket = io();
-        
-        // --- 1. SMART ROOM LOGIC ---
-        // URL se Room ID check karo
         let roomId = window.location.hash.substring(1);
-
         if (!roomId) {
-            // Agar koi ID nahi hai (Anjaan aadmi), toh Random ID banao
-            // Jaise: 'room-a1b2c'
             roomId = "room-" + Math.random().toString(36).substring(2, 7);
-            
-            // URL update karo taaki bande ko pata chale wo naye room mein hai
             window.location.hash = roomId;
         }
         
-        console.log("Joined Room:", roomId);
-
-        // Name Logic (Aapka wala localStorage fix)
         let storedName = localStorage.getItem('watchPartyUser');
         let username = storedName ? storedName : (prompt("Apna naam batayein:") || "Guest");
         if(!storedName) localStorage.setItem('watchPartyUser', username);
@@ -97,8 +69,9 @@
         socket.emit('join-room', roomId, username);
 
         let myRole = 'Viewer'; 
+        let isSyncing = false; // Loop rokne ke liye
 
-        // --- 2. HOST & ROLE LOGIC ---
+        // --- ROLE LOGIC ---
         socket.on('role-update', (data) => {
             myRole = data.role;
             const badge = document.getElementById('role-display');
@@ -108,18 +81,14 @@
                 badge.className = "role-badge host";
                 document.getElementById('host-controls').style.display = 'flex';
                 document.getElementById('request-btn').style.display = 'none';
-                document.getElementById('click-blocker').style.display = 'none'; // Click allow karo
             } else {
                 badge.className = "role-badge viewer";
                 document.getElementById('host-controls').style.display = 'none';
                 document.getElementById('request-btn').style.display = 'block';
-                document.getElementById('click-blocker').style.display = 'block'; // Click block karo
             }
         });
 
-        // --- 3. AUTO SYNC FOR NEW USER ---
-        
-        // Host naye bande ko data bhejega
+        // --- LOGIC: NEW USER JOIN (SAME AS BEFORE) ---
         socket.on('get-current-state', (data) => {
             if (myRole === 'Host' && player && player.getVideoData) {
                 const currentState = {
@@ -131,18 +100,46 @@
                 socket.emit('send-current-state', currentState);
             }
         });
-
-        // Naya banda data receive karega
+        
         socket.on('sync-state-on-join', (data) => {
             if (data.videoId) player.loadVideoById(data.videoId);
             setTimeout(() => {
                 player.seekTo(data.time);
-                if (data.state === 1) player.playVideo();
-                else player.pauseVideo();
+                if (data.state === 1) player.playVideo(); 
+                // Agar host paused hai, toh hum bhi pause rahenge join par
             }, 1000);
         });
 
-        // --- 4. PLAYER & SOCKETS ---
+        // --- MAIN LOGIC: PLAY/PAUSE & SYNC ---
+        
+        // 1. Viewer Play dabata hai -> Server -> Host
+        socket.on('provide-time-for-viewer', (data) => {
+            // Ye code HOST ke browser mein chalega
+            if(myRole === 'Host') {
+                socket.emit('host-sends-time', {
+                    requesterId: data.requesterId,
+                    time: player.getCurrentTime()
+                });
+            }
+        });
+
+        // 2. Viewer ko Host ka time milta hai
+        socket.on('jump-to-live', (time) => {
+            // Ye code VIEWER ke browser mein chalega
+            isSyncing = true; // Flag on karo taaki loop na bane
+            
+            // Agar gap 2 second se zyada hai tabhi jump karo
+            let diff = Math.abs(player.getCurrentTime() - time);
+            if(diff > 2) {
+                player.seekTo(time);
+                console.log("Synced to Host at:", time);
+            }
+            player.playVideo();
+            
+            setTimeout(() => { isSyncing = false; }, 1000);
+        });
+
+        // --- YOUTUBE PLAYER ---
         var player;
         function onYouTubeIframeAPIReady() {
             player = new YT.Player('player', {
@@ -153,28 +150,27 @@
         }
 
         function onPlayerStateChange(event) {
-            // Viewer server ko signal nahi bhej sakta
-            if (myRole === 'Viewer') return; 
+            // Yahan hum 'socket.emit(sync-action)' nahi karenge.
+            // Play/Pause ab PERSONAL hai.
             
-            if (event.data == 1) {
-                socket.emit('sync-action', { roomId, action: 'play', time: player.getCurrentTime() });
-            } else if (event.data == 2) {
-                socket.emit('sync-action', { roomId, action: 'pause' });
+            // Logic: Agar main VIEWER hu aur maine PLAY dabaya...
+            if (event.data == 1 && myRole === 'Viewer') {
+                if(!isSyncing) {
+                    // Host se time maango taaki hum 'bd' ke saath sync ho jayein
+                    socket.emit('request-host-time', roomId);
+                }
             }
         }
 
-        socket.on('sync-action', (data) => {
-            if (data.action === 'play') {
-                let diff = Math.abs(player.getCurrentTime() - data.time);
-                if(diff > 1) player.seekTo(data.time);
-                player.playVideo();
-            } else if (data.action === 'pause') {
-                player.pauseVideo();
-            }
-        });
-
+        // --- VIDEO CHANGE (Host Only) ---
         socket.on('change-video', (id) => {
             player.loadVideoById(id);
+        });
+
+        // --- REQUEST & CHAT ---
+        socket.on('control-request', (data) => {
+            let grant = confirm(`${data.name} video change karna chahta hai. Permission deni hai?`);
+            if (grant) socket.emit('grant-control', { roomId, targetId: data.id, targetName: data.name });
         });
 
         socket.on('receive-message', (data) => {
@@ -186,13 +182,6 @@
             chatWin.scrollTop = chatWin.scrollHeight;
         });
 
-        // Request Pop-up (Host ke liye)
-        socket.on('control-request', (data) => {
-            let grant = confirm(`${data.name} control maang raha hai. Allow karein?`);
-            if (grant) socket.emit('grant-control', { roomId, targetId: data.id, targetName: data.name });
-        });
-
-        // --- 5. BUTTON ACTIONS ---
         function changeVideo() {
             let url = document.getElementById('videoUrl').value;
             let videoId = "";
@@ -205,7 +194,7 @@
 
         function requestControl() {
             socket.emit('request-control', roomId);
-            alert("Request Host ko bhej di gayi hai!");
+            alert("Request sent!");
         }
 
         function sendMessage() {
@@ -216,7 +205,6 @@
             }
         }
         
-        // Enter key se message bhejo
         document.getElementById("chatInput").addEventListener("keyup", function(event) {
             if (event.key === "Enter") sendMessage();
         });
