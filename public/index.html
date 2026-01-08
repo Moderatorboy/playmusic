@@ -2,215 +2,489 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Watch Party</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>RenTube - Watch Together</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@joeattardi/emoji-button@4.6.4/dist/index.css">
     <style>
-        /* CSS Same as before */
-        body { margin: 0; font-family: sans-serif; background: #121212; color: white; display: flex; height: 100vh; }
-        #video-container { flex: 3; display: flex; justify-content: center; align-items: center; border-right: 1px solid #333; position: relative; }
-        iframe { width: 100%; height: 100%; border: none; }
-        #sidebar { flex: 1; display: flex; flex-direction: column; background: #1e1e1e; min-width: 300px; }
-        #status-bar { padding: 10px; background: #000; text-align: center; color: #aaa; font-size: 13px; border-bottom: 1px solid #333; }
-        .role-badge { font-weight: bold; color: #fff; padding: 2px 6px; border-radius: 4px; }
-        .host { background: #e50914; }
-        .viewer { background: #555; }
-        #chat-window { flex-grow: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-        .msg { padding: 5px 10px; background: #333; border-radius: 4px; font-size: 14px; }
-        .sys-msg { color: #f39c12; font-size: 12px; text-align: center; margin: 5px 0; }
-        #controls { padding: 15px; background: #252525; border-top: 1px solid #333; }
-        input { width: 65%; padding: 8px; background: #333; border: none; color: white; border-radius: 4px; }
-        button { padding: 8px; cursor: pointer; border: none; border-radius: 4px; color: white; font-weight: bold; }
-        .btn-play { background: #e50914; width: 30%; }
-        .btn-chat { background: #444; width: 30%; }
-        #request-btn { width: 100%; background: #f39c12; margin-top: 10px; display: none; color: black; }
-        .input-group { margin-bottom: 10px; display: flex; justify-content: space-between; }
+        :root {
+            --bg-main: #0f0f0f;
+            --bg-sec: #181818;
+            --text-main: #ffffff;
+            --text-sec: #aaaaaa;
+            --primary: #e50914; /* YouTube Red */
+            --accent: #3ea6ff;  /* Blue for buttons */
+            --border: #333;
+        }
+
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: 'Roboto', sans-serif; background: var(--bg-main); color: var(--text-main); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* --- LANDING PAGE --- */
+        #landing-page { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; z-index: 100; background: var(--bg-main); position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        .landing-logo { font-size: 40px; font-weight: bold; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+        .landing-logo i { color: var(--primary); }
+        .landing-text { font-size: 18px; color: var(--text-sec); margin-bottom: 40px; max-width: 400px; }
+        .create-room-btn { padding: 15px 40px; font-size: 18px; background: var(--primary); color: white; border: none; border-radius: 30px; cursor: pointer; font-weight: bold; transition: background 0.2s; box-shadow: 0 4px 15px rgba(229, 9, 20, 0.4); }
+        .create-room-btn:hover { background: #ff3333; transform: scale(1.05); }
+
+        /* --- ROOM INTERFACE --- */
+        #room-interface { display: none; flex-direction: column; height: 100%; width: 100%; }
+
+        /* HEADER */
+        .header { height: 56px; background: var(--bg-sec); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--border); z-index: 50; }
+        .logo { font-size: 20px; font-weight: bold; display: flex; align-items: center; gap: 5px; letter-spacing: -1px; }
+        .logo i { color: var(--primary); }
+        
+        /* Search Bar */
+        .search-bar-container { flex: 1; margin: 0 20px; max-width: 600px; position: relative; display: flex; }
+        .search-bar { width: 100%; background: #121212; border: 1px solid var(--border); padding: 10px 40px 10px 15px; border-radius: 20px; color: var(--text-main); outline: none; font-size: 14px; transition: border 0.2s; }
+        .search-bar:focus { border-color: #1c62b9; }
+        .search-icon { position: absolute; right: 15px; top: 50%; transform: translateY(-50%); color: var(--text-sec); cursor: pointer; }
+
+        /* Header Actions */
+        .header-actions { display: flex; align-items: center; gap: 20px; }
+        .action-btn { background: none; border: none; color: var(--text-main); font-size: 18px; cursor: pointer; position: relative; padding: 5px; }
+        .action-btn:hover { color: var(--primary); }
+        
+        .user-count-badge { display: flex; align-items: center; gap: 6px; font-size: 14px; background: #2a2a2a; padding: 6px 12px; border-radius: 18px; font-weight: 500; cursor: default; position: relative; }
+        
+        /* Notification Dot */
+        #request-dot { display: none; width: 10px; height: 10px; background: var(--primary); border-radius: 50%; position: absolute; top: -2px; right: -2px; border: 2px solid var(--bg-sec); }
+
+        /* Requests Dropdown */
+        #requests-dropdown { position: absolute; top: 60px; right: 10px; background: var(--bg-sec); border: 1px solid var(--border); border-radius: 12px; width: 280px; display: none; z-index: 100; box-shadow: 0 8px 24px rgba(0,0,0,0.5); overflow: hidden; }
+        .dropdown-header { padding: 12px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: bold; color: var(--text-sec); background: #202020; }
+        .request-item { padding: 12px; border-bottom: 1px solid #2a2a2a; display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+        .request-item:last-child { border-bottom: none; }
+        .request-actions { display: flex; gap: 8px; }
+        .req-btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
+        .req-accept { background: #2ba640; color: white; }
+        .req-deny { background: #333; color: white; }
+
+        /* MAIN LAYOUT */
+        .main-content { display: flex; flex: 1; overflow: hidden; }
+        
+        /* VIDEO SECTION */
+        .video-section { flex: 3; display: flex; flex-direction: column; background: #000; position: relative; justify-content: flex-start; }
+        .player-wrapper { position: relative; width: 100%; padding-top: 56.25%; /* 16:9 Aspect Ratio */ background: #000; }
+        #player { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        #click-blocker { position: absolute; top: 0; left: 0; width: 100%; height: 85%; z-index: 10; display: none; } /* Only block video area */
+
+        .video-info-bar { padding: 20px; background: var(--bg-main); border-bottom: 1px solid var(--border); }
+        .video-title-text { font-size: 18px; font-weight: 600; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .video-meta { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--text-sec); }
+        .role-tag { background: #2a2a2a; padding: 2px 8px; border-radius: 4px; color: #fff; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+        /* SIDEBAR (Tabs) */
+        .sidebar { flex: 1; display: flex; flex-direction: column; min-width: 350px; max-width: 400px; background: var(--bg-sec); border-left: 1px solid var(--border); }
+        .tabs { display: flex; border-bottom: 1px solid var(--border); background: #121212; }
+        .tab-btn { flex: 1; padding: 15px; background: transparent; border: none; color: var(--text-sec); font-weight: 600; cursor: pointer; text-transform: uppercase; font-size: 14px; letter-spacing: 0.5px; transition: 0.2s; position: relative; }
+        .tab-btn.active { color: var(--text-main); background: var(--bg-sec); }
+        .tab-btn.active::after { content: ''; position: absolute; bottom: 0; left: 0; width: 100%; height: 3px; background: var(--primary); }
+
+        .tab-content { flex: 1; display: none; flex-direction: column; overflow-y: auto; }
+        .tab-content.active { display: flex; }
+
+        /* CHAT TAB */
+        #chat-messages { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+        .msg { font-size: 14px; line-height: 1.5; padding: 8px 12px; background: #2a2a2a; border-radius: 8px; align-self: flex-start; max-width: 90%; word-break: break-word; }
+        .msg b { color: #aaa; font-size: 12px; display: block; margin-bottom: 2px; }
+        .sys-msg { text-align: center; font-size: 12px; color: #666; margin: 10px 0; font-style: italic; background: #1a1a1a; padding: 4px; border-radius: 4px; align-self: center; }
+        
+        .chat-input-area { padding: 15px; background: var(--bg-sec); border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+        #msgInput { flex: 1; padding: 12px 15px; border-radius: 24px; border: 1px solid #333; background: #0a0a0a; color: var(--text-main); outline: none; transition: border 0.2s; }
+        #msgInput:focus { border-color: #555; }
+        #emoji-btn { background: none; border: none; color: var(--text-sec); font-size: 22px; cursor: pointer; padding: 5px; transition: color 0.2s; }
+        #emoji-btn:hover { color: #ebba16; }
+
+        /* PLAYLIST TAB */
+        #playlist-container { flex: 1; overflow-y: auto; }
+        .playlist-item { display: flex; gap: 12px; padding: 12px 15px; border-bottom: 1px solid #252525; cursor: pointer; transition: background 0.2s; }
+        .playlist-item:hover { background: #252525; }
+        .playlist-item.active { background: #2a2a2a; border-left: 3px solid var(--primary); }
+        .pl-thumb { width: 100px; height: 56px; background: #000; border-radius: 6px; object-fit: cover; }
+        .pl-details { flex: 1; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
+        .pl-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #eee; margin-bottom: 4px; }
+        .pl-status { font-size: 12px; color: #888; }
+
+        /* CONTROLS SECTION (Bottom of Sidebar) */
+        .controls-section { padding: 15px; background: var(--bg-sec); border-top: 1px solid var(--border); }
+        .control-btn { width: 100%; padding: 12px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 14px; text-transform: uppercase; transition: transform 0.1s; }
+        .control-btn:active { transform: scale(0.98); }
+        .btn-add { background: #222; color: var(--accent); border: 1px solid #333; }
+        .btn-add:hover { background: #2a2a2a; }
+        .btn-raise { background: #ff9800; color: #000; }
+        .btn-raise:hover { background: #ffac33; }
+
+        /* MOBILE RESPONSIVE */
+        @media (max-width: 768px) {
+            .main-content { flex-direction: column; }
+            .sidebar { border-left: none; height: 100%; min-width: 100%; flex: 1; }
+            .video-section { flex: none; }
+            .search-bar-container { position: absolute; top: 56px; left: 0; width: 100%; margin: 0; padding: 10px; background: var(--bg-sec); display: none; z-index: 40; border-bottom: 1px solid var(--border); max-width: none; }
+            .search-bar-container.show { display: block; }
+            .search-icon-mobile { display: block; margin-right: 15px; }
+            .header-actions { gap: 15px; }
+            .user-count-badge span { display: none; } /* Hide count text on very small screens, show icon only */
+            .user-count-badge #online-count { display: inline; margin-left: 5px; }
+        }
+        @media (min-width: 769px) {
+            .search-icon-mobile { display: none; }
+        }
     </style>
 </head>
 <body>
 
-    <div id="video-container">
-        <div id="player"></div>
+    <div id="landing-page">
+        <div class="landing-logo"><i class="fas fa-play-circle"></i> RenTube</div>
+        <p class="landing-text">Watch YouTube videos together with your friends in sync. Chat, create playlists, and enjoy the party!</p>
+        <button class="create-room-btn" onclick="createRoom()">Create Room</button>
     </div>
 
-    <div id="sidebar">
-        <div id="status-bar">
-            Role: <span id="role-display" class="role-badge viewer">Connecting...</span>
-        </div>
-        <div id="chat-window"></div>
-        <div id="controls">
-            <div id="host-controls" class="input-group">
-                <input type="text" id="videoUrl" placeholder="Paste YouTube Link">
-                <button class="btn-play" onclick="changeVideo()">Change Video</button>
-            </div>
-            <button id="request-btn" onclick="requestControl()">✋ Raise Hand (To Change Video)</button>
+    <div id="room-interface">
+        <div class="header">
+            <div class="logo"><i class="fas fa-play-circle"></i> RenTube</div>
+            
+            <i class="fas fa-search search-icon-mobile action-btn" onclick="toggleMobileSearch()"></i>
 
-            <div class="input-group" style="margin-top: 15px;">
-                <input type="text" id="chatInput" placeholder="Type message...">
-                <button class="btn-chat" onclick="sendMessage()">Send</button>
+            <div class="search-bar-container" id="searchContainer">
+                <input type="text" class="search-bar" id="videoUrlInput" placeholder="Paste YouTube URL to add...">
+                <i class="fas fa-plus search-icon" onclick="addToPlaylist()" title="Add to Playlist"></i>
+            </div>
+
+            <div class="header-actions">
+                <button class="action-btn" onclick="shareRoom()" title="Copy Room Link"><i class="fas fa-share-alt"></i></button>
+                
+                <div style="position: relative;">
+                    <div class="user-count-badge" id="userCountBadge">
+                        <i class="fas fa-user-friends"></i> <span id="online-count">0</span>
+                        <div id="request-dot"></div>
+                    </div>
+                    <div id="requests-dropdown">
+                        <div class="dropdown-header">PENDING REQUESTS</div>
+                        <div id="requests-list">
+                            <div style="padding:15px; text-align:center; color:#666;">No pending requests</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="video-section">
+                <div class="player-wrapper">
+                    <div id="player"></div>
+                    <div id="click-blocker"></div>
+                </div>
+                <div class="video-info-bar">
+                    <div class="video-title-text" id="current-title">Waiting for video...</div>
+                    <div class="video-meta">
+                        <span><i class="fas fa-shield-alt"></i> Host Controls Enabled</span>
+                        <span class="role-tag" id="role-badge">GUEST</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar">
+                <div class="tabs">
+                    <button class="tab-btn active" onclick="openTab('chat')">Chat</button>
+                    <button class="tab-btn" onclick="openTab('playlist')">Playlist</button>
+                </div>
+
+                <div id="chat" class="tab-content active">
+                    <div id="chat-messages"></div>
+                    <div class="chat-input-area">
+                        <button id="emoji-btn"><i class="far fa-smile"></i></button>
+                        <input type="text" id="msgInput" placeholder="Say something...">
+                    </div>
+                </div>
+
+                <div id="playlist" class="tab-content">
+                    <div id="playlist-container">
+                        <div style="padding:30px; text-align:center; color:#555; font-size:13px;">
+                            <i class="fas fa-list" style="font-size:24px; margin-bottom:10px; display:block;"></i>
+                            Queue is empty.<br>Paste a URL above to add.
+                        </div>
+                    </div>
+                    
+                    <div class="controls-section">
+                        <div id="host-tools" style="display:none; text-align:center; color:#555; font-size:12px;">
+                            Use the Search Bar to add videos.
+                        </div>
+                        <div id="viewer-tools" style="display:none;">
+                            <button class="control-btn btn-raise" onclick="requestControl()"><i class="fas fa-hand-paper"></i> Request Control</button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://www.youtube.com/iframe_api"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@joeattardi/emoji-button@4.6.4/dist/index.min.js"></script>
+
     <script>
         const socket = io();
-        
-        // --- 1. USER ID LOGIC (Ye zaruri hai refresh fix karne ke liye) ---
-        let myUserId = localStorage.getItem('wp_userId');
-        if (!myUserId) {
-            // Agar pehli baar aaya hai to ID banao
-            myUserId = 'user_' + Math.random().toString(36).substr(2, 9);
-            localStorage.setItem('wp_userId', myUserId);
-        }
-
-        // Room Logic
+        let player;
+        let myRole = 'Viewer';
+        let isSyncing = false;
         let roomId = window.location.hash.substring(1);
-        if (!roomId) {
-            roomId = "room-" + Math.random().toString(36).substring(2, 7);
-            window.location.hash = roomId;
+
+        // --- INIT APP ---
+        function init() {
+            if (!roomId) {
+                document.getElementById('landing-page').style.display = 'flex';
+                document.getElementById('room-interface').style.display = 'none';
+            } else {
+                document.getElementById('landing-page').style.display = 'none';
+                document.getElementById('room-interface').style.display = 'flex';
+                joinRoom();
+            }
         }
-        
-        // Name Logic
-        let storedName = localStorage.getItem('watchPartyUser');
-        let username = storedName ? storedName : (prompt("Apna naam batayein:") || "Guest");
-        if(!storedName) localStorage.setItem('watchPartyUser', username);
-        
-        // --- JOIN ROOM (Ab hum userId bhi bhej rahe hain) ---
-        socket.emit('join-room', roomId, username, myUserId);
 
-        let myRole = 'Viewer'; 
-        let isSyncing = false; // Loop rokne ke liye
+        function createRoom() {
+            const newRoomId = "room-" + Math.random().toString(36).substring(2, 7);
+            window.location.hash = newRoomId;
+            location.reload();
+        }
 
-        // --- ROLE LOGIC ---
+        function joinRoom() {
+            // Persistent ID logic (from your previous server.js update)
+            let myUserId = localStorage.getItem('wp_userId') || 'user_' + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem('wp_userId', myUserId);
+
+            let username = localStorage.getItem('wp_username') || prompt("Enter your Nickname:") || "Guest";
+            localStorage.setItem('wp_username', username);
+
+            socket.emit('join-room', roomId, username, myUserId);
+            initEmojiPicker();
+        }
+
+        // --- UI HELPERS ---
+        function openTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            document.getElementById(tabName).classList.add('active');
+            event.currentTarget.classList.add('active');
+        }
+
+        function shareRoom() {
+            navigator.clipboard.writeText(window.location.href).then(() => {
+                alert("Room Link copied to clipboard!");
+            });
+        }
+
+        function toggleMobileSearch() {
+            document.getElementById('searchContainer').classList.toggle('show');
+        }
+
+        function toggleRequests() {
+            const dd = document.getElementById('requests-dropdown');
+            dd.style.display = dd.style.display === 'block' ? 'none' : 'block';
+            document.getElementById('request-dot').style.display = 'none'; // Hide dot when seen
+        }
+
+        // --- SOCKET LISTENERS ---
+
+        // 1. ROLE UPDATE
         socket.on('role-update', (data) => {
             myRole = data.role;
-            const badge = document.getElementById('role-display');
-            badge.innerText = myRole; 
+            document.getElementById('role-badge').innerText = myRole;
             
             if (myRole === 'Host' || myRole === 'Co-Host') {
-                badge.className = "role-badge host";
-                document.getElementById('host-controls').style.display = 'flex';
-                document.getElementById('request-btn').style.display = 'none';
+                document.getElementById('host-tools').style.display = 'block';
+                document.getElementById('viewer-tools').style.display = 'none';
+                document.getElementById('click-blocker').style.display = 'none';
+                
+                // Enable Dropdown interaction
+                const badge = document.getElementById('userCountBadge');
+                badge.style.cursor = 'pointer';
+                badge.onclick = toggleRequests;
             } else {
-                badge.className = "role-badge viewer";
-                document.getElementById('host-controls').style.display = 'none';
-                document.getElementById('request-btn').style.display = 'block';
+                document.getElementById('host-tools').style.display = 'none';
+                document.getElementById('viewer-tools').style.display = 'block';
+                document.getElementById('click-blocker').style.display = 'block';
+                
+                // Disable Dropdown
+                const badge = document.getElementById('userCountBadge');
+                badge.style.cursor = 'default';
+                badge.onclick = null;
+                document.getElementById('requests-dropdown').style.display = 'none';
             }
         });
 
-        // --- SYNC LOGIC: NEW USER JOIN ---
-        socket.on('get-current-state', (data) => {
-            // Note: data.newSocketId server se aa raha hai
-            if (myRole === 'Host' && player && player.getVideoData) {
-                const currentState = {
-                    targetSocketId: data.newSocketId,
-                    videoId: player.getVideoData().video_id,
-                    time: player.getCurrentTime(),
-                    state: player.getPlayerState()
+        // 2. UPDATES (Users, Title, Playlist)
+        socket.on('update-user-list', (count) => {
+            document.getElementById('online-count').innerText = count;
+        });
+
+        socket.on('update-title', (title) => {
+            document.getElementById('current-title').innerText = title;
+        });
+
+        socket.on('update-playlist', (list) => {
+            const container = document.getElementById('playlist-container');
+            container.innerHTML = "";
+            
+            if (list.length === 0) {
+                container.innerHTML = '<div style="padding:30px; text-align:center; color:#555; font-size:13px;"><i class="fas fa-list" style="font-size:24px; margin-bottom:10px; display:block;"></i>Queue is empty.<br>Paste a URL above to add.</div>';
+                return;
+            }
+
+            list.forEach((vid, index) => {
+                const div = document.createElement('div');
+                div.className = `playlist-item ${index === 0 ? 'active' : ''}`;
+                div.innerHTML = `
+                    <img src="${vid.thumbnail}" class="pl-thumb">
+                    <div class="pl-details">
+                        <div class="pl-title">${vid.title}</div>
+                        <div class="pl-status">${index === 0 ? 'Now Playing' : 'Up Next'}</div>
+                    </div>
+                `;
+                // Host click logic to change video
+                div.onclick = () => {
+                    if(myRole === 'Host' || myRole === 'Co-Host') {
+                        socket.emit('change-video', { roomId, videoId: vid.id, title: vid.title });
+                    }
                 };
-                socket.emit('send-current-state', currentState);
-            }
-        });
-        
-        socket.on('sync-state-on-join', (data) => {
-            if (data.videoId) player.loadVideoById(data.videoId);
-            setTimeout(() => {
-                player.seekTo(data.time);
-                if (data.state === 1) player.playVideo(); 
-            }, 1000);
+                container.appendChild(div);
+            });
         });
 
-        // --- MAIN LOGIC: PLAY/PAUSE & SYNC ---
-        
-        // 1. Viewer Play dabata hai -> Server -> Host
-        socket.on('provide-time-for-viewer', (data) => {
-            if(myRole === 'Host') {
-                socket.emit('host-sends-time', {
-                    requesterId: data.requesterId,
-                    time: player.getCurrentTime()
+        // 3. VIDEO & CHAT
+        socket.on('change-video', (data) => {
+            if(player && player.loadVideoById) player.loadVideoById(data.videoId);
+        });
+
+        socket.on('receive-message', (data) => {
+            const list = document.getElementById('chat-messages');
+            const div = document.createElement('div');
+            if(data.user === 'System') {
+                div.className = 'sys-msg';
+                div.innerText = data.msg;
+            } else {
+                div.className = 'msg';
+                div.innerHTML = `<b>${data.user}</b>${data.msg}`;
+            }
+            list.appendChild(div);
+            list.scrollTop = list.scrollHeight;
+        });
+
+        // 4. REQUESTS SYSTEM
+        socket.on('update-requests', (requests) => {
+            const list = document.getElementById('requests-list');
+            const dot = document.getElementById('request-dot');
+            list.innerHTML = "";
+
+            if (requests.length > 0) {
+                dot.style.display = 'block';
+                requests.forEach(req => {
+                    const div = document.createElement('div');
+                    div.className = 'request-item';
+                    div.innerHTML = `
+                        <span>${req.name}</span>
+                        <div class="request-actions">
+                            <button class="req-btn req-accept" onclick="handleRequest('${req.id}', '${req.name}', 'accept')">Accept</button>
+                            <button class="req-btn req-deny" onclick="handleRequest('${req.id}', '${req.name}', 'deny')">Deny</button>
+                        </div>
+                    `;
+                    list.appendChild(div);
                 });
+            } else {
+                dot.style.display = 'none';
+                list.innerHTML = '<div style="padding:15px; text-align:center; color:#666;">No pending requests</div>';
             }
         });
 
-        // 2. Viewer ko Host ka time milta hai
-        socket.on('jump-to-live', (time) => {
-            isSyncing = true;
-            let diff = Math.abs(player.getCurrentTime() - time);
-            if(diff > 2) {
-                player.seekTo(time);
-                console.log("Synced to Host at:", time);
-            }
-            player.playVideo();
-            setTimeout(() => { isSyncing = false; }, 1000);
-        });
+        function handleRequest(targetId, targetName, action) {
+            socket.emit('grant-control', { roomId, targetUserId: targetId, targetName, action });
+        }
 
-        // --- YOUTUBE PLAYER ---
-        var player;
+        // --- YOUTUBE API ---
         function onYouTubeIframeAPIReady() {
             player = new YT.Player('player', {
-                videoId: 'jfKfPfyJRdk',
-                playerVars: { 'autoplay': 1, 'controls': 1, 'rel': 0 },
+                videoId: 'jfKfPfyJRdk', // Default
+                playerVars: { 'autoplay': 1, 'controls': 1, 'rel': 0, 'playsinline': 1 },
                 events: { 'onStateChange': onPlayerStateChange }
             });
         }
 
         function onPlayerStateChange(event) {
-            // Play dabane par Host se sync maango
-            if (event.data == 1 && myRole === 'Viewer') {
-                if(!isSyncing) {
-                    socket.emit('request-host-time', roomId);
-                }
+            // Viewers ask for sync when playing
+            if (event.data == 1 && myRole === 'Viewer' && !isSyncing) {
+                socket.emit('request-host-time', roomId);
             }
         }
 
-        // --- VIDEO CHANGE (Host Only) ---
-        socket.on('change-video', (id) => {
-            player.loadVideoById(id);
+        socket.on('provide-time-for-viewer', (data) => {
+            if(myRole === 'Host') socket.emit('host-sends-time', { requesterId: data.requesterId, time: player.getCurrentTime() });
         });
 
-        // --- REQUEST & CHAT ---
-        socket.on('control-request', (data) => {
-            // data.id yahan UserID hai
-            let grant = confirm(`${data.name} video change karna chahta hai. Permission deni hai?`);
-            if (grant) socket.emit('grant-control', { roomId, targetUserId: data.id, targetName: data.name });
+        socket.on('jump-to-live', (time) => {
+            isSyncing = true;
+            if(Math.abs(player.getCurrentTime() - time) > 2) player.seekTo(time);
+            player.playVideo();
+            setTimeout(() => { isSyncing = false; }, 1000);
         });
 
-        socket.on('receive-message', (data) => {
-            const chatWin = document.getElementById('chat-window');
-            const div = document.createElement('div');
-            div.className = data.user === 'System' ? 'sys-msg' : 'msg';
-            div.innerText = data.user === 'System' ? data.msg : `${data.user}: ${data.msg}`;
-            chatWin.appendChild(div);
-            chatWin.scrollTop = chatWin.scrollHeight;
-        });
-
-        function changeVideo() {
-            let url = document.getElementById('videoUrl').value;
+        // --- ACTIONS ---
+        function addToPlaylist() {
+            let url = document.getElementById('videoUrlInput').value;
             let videoId = "";
             if (url.includes("v=")) videoId = url.split('v=')[1].split('&')[0];
             else if (url.includes("youtu.be/")) videoId = url.split('youtu.be/')[1].split('?')[0];
 
-            if(videoId) socket.emit('change-video', { roomId, videoId });
-            document.getElementById('videoUrl').value = "";
+            if(videoId) {
+                socket.emit('add-to-playlist', { roomId, videoId, title: `Video ID: ${videoId}` });
+                document.getElementById('videoUrlInput').value = "";
+                openTab('playlist');
+            } else {
+                alert("Please enter a valid YouTube URL.");
+            }
         }
 
         function requestControl() {
             socket.emit('request-control', roomId);
-            alert("Request sent!");
+            alert("Request sent to Host! Wait for approval.");
         }
 
-        function sendMessage() {
-            let msg = document.getElementById('chatInput').value;
-            if(msg.trim()) {
-                socket.emit('send-message', { roomId, user: username, msg });
-                document.getElementById('chatInput').value = "";
-            }
+        // --- EMOJI & CHAT ---
+        function initEmojiPicker() {
+            const button = document.querySelector('#emoji-btn');
+            const picker = new EmojiButton({
+                theme: 'dark',
+                autoHide: false,
+                position: 'top-start'
+            });
+
+            picker.on('emoji', emoji => {
+                document.querySelector('#msgInput').value += emoji;
+            });
+
+            button.addEventListener('click', () => {
+                picker.togglePicker(button);
+            });
         }
-        
-        document.getElementById("chatInput").addEventListener("keyup", function(event) {
-            if (event.key === "Enter") sendMessage();
+
+        document.getElementById("msgInput").addEventListener("keyup", function(event) {
+            if (event.key === "Enter") {
+                let msg = this.value;
+                if(msg.trim()) {
+                    socket.emit('send-message', { roomId, user: localStorage.getItem('wp_username'), msg });
+                    this.value = "";
+                }
+            }
         });
+
+        document.getElementById("videoUrlInput").addEventListener("keyup", function(event) {
+            if (event.key === "Enter") addToPlaylist();
+        });
+
+        // START
+        init();
+
     </script>
 </body>
 </html>
