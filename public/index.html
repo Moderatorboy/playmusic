@@ -9,7 +9,6 @@
         body { margin: 0; font-family: sans-serif; background: #121212; color: white; display: flex; height: 100vh; }
         #video-container { flex: 3; display: flex; justify-content: center; align-items: center; border-right: 1px solid #333; position: relative; }
         iframe { width: 100%; height: 100%; border: none; }
-        #click-blocker { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; z-index: 10; }
         #sidebar { flex: 1; display: flex; flex-direction: column; background: #1e1e1e; min-width: 300px; }
         #status-bar { padding: 10px; background: #000; text-align: center; color: #aaa; font-size: 13px; border-bottom: 1px solid #333; }
         .role-badge { font-weight: bold; color: #fff; padding: 2px 6px; border-radius: 4px; }
@@ -31,11 +30,11 @@
 
     <div id="video-container">
         <div id="player"></div>
-        </div>
+    </div>
 
     <div id="sidebar">
         <div id="status-bar">
-            Status: <span id="role-display" class="role-badge viewer">Connecting...</span>
+            Role: <span id="role-display" class="role-badge viewer">Connecting...</span>
         </div>
         <div id="chat-window"></div>
         <div id="controls">
@@ -56,17 +55,29 @@
     <script src="https://www.youtube.com/iframe_api"></script>
     <script>
         const socket = io();
+        
+        // --- 1. USER ID LOGIC (Ye zaruri hai refresh fix karne ke liye) ---
+        let myUserId = localStorage.getItem('wp_userId');
+        if (!myUserId) {
+            // Agar pehli baar aaya hai to ID banao
+            myUserId = 'user_' + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem('wp_userId', myUserId);
+        }
+
+        // Room Logic
         let roomId = window.location.hash.substring(1);
         if (!roomId) {
             roomId = "room-" + Math.random().toString(36).substring(2, 7);
             window.location.hash = roomId;
         }
         
+        // Name Logic
         let storedName = localStorage.getItem('watchPartyUser');
         let username = storedName ? storedName : (prompt("Apna naam batayein:") || "Guest");
         if(!storedName) localStorage.setItem('watchPartyUser', username);
         
-        socket.emit('join-room', roomId, username);
+        // --- JOIN ROOM (Ab hum userId bhi bhej rahe hain) ---
+        socket.emit('join-room', roomId, username, myUserId);
 
         let myRole = 'Viewer'; 
         let isSyncing = false; // Loop rokne ke liye
@@ -88,11 +99,12 @@
             }
         });
 
-        // --- LOGIC: NEW USER JOIN (SAME AS BEFORE) ---
+        // --- SYNC LOGIC: NEW USER JOIN ---
         socket.on('get-current-state', (data) => {
+            // Note: data.newSocketId server se aa raha hai
             if (myRole === 'Host' && player && player.getVideoData) {
                 const currentState = {
-                    targetId: data.newUserId,
+                    targetSocketId: data.newSocketId,
                     videoId: player.getVideoData().video_id,
                     time: player.getCurrentTime(),
                     state: player.getPlayerState()
@@ -106,7 +118,6 @@
             setTimeout(() => {
                 player.seekTo(data.time);
                 if (data.state === 1) player.playVideo(); 
-                // Agar host paused hai, toh hum bhi pause rahenge join par
             }, 1000);
         });
 
@@ -114,7 +125,6 @@
         
         // 1. Viewer Play dabata hai -> Server -> Host
         socket.on('provide-time-for-viewer', (data) => {
-            // Ye code HOST ke browser mein chalega
             if(myRole === 'Host') {
                 socket.emit('host-sends-time', {
                     requesterId: data.requesterId,
@@ -125,17 +135,13 @@
 
         // 2. Viewer ko Host ka time milta hai
         socket.on('jump-to-live', (time) => {
-            // Ye code VIEWER ke browser mein chalega
-            isSyncing = true; // Flag on karo taaki loop na bane
-            
-            // Agar gap 2 second se zyada hai tabhi jump karo
+            isSyncing = true;
             let diff = Math.abs(player.getCurrentTime() - time);
             if(diff > 2) {
                 player.seekTo(time);
                 console.log("Synced to Host at:", time);
             }
             player.playVideo();
-            
             setTimeout(() => { isSyncing = false; }, 1000);
         });
 
@@ -150,13 +156,9 @@
         }
 
         function onPlayerStateChange(event) {
-            // Yahan hum 'socket.emit(sync-action)' nahi karenge.
-            // Play/Pause ab PERSONAL hai.
-            
-            // Logic: Agar main VIEWER hu aur maine PLAY dabaya...
+            // Play dabane par Host se sync maango
             if (event.data == 1 && myRole === 'Viewer') {
                 if(!isSyncing) {
-                    // Host se time maango taaki hum 'bd' ke saath sync ho jayein
                     socket.emit('request-host-time', roomId);
                 }
             }
@@ -169,8 +171,9 @@
 
         // --- REQUEST & CHAT ---
         socket.on('control-request', (data) => {
+            // data.id yahan UserID hai
             let grant = confirm(`${data.name} video change karna chahta hai. Permission deni hai?`);
-            if (grant) socket.emit('grant-control', { roomId, targetId: data.id, targetName: data.name });
+            if (grant) socket.emit('grant-control', { roomId, targetUserId: data.id, targetName: data.name });
         });
 
         socket.on('receive-message', (data) => {
