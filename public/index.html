@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Watch Party Room</title>
+    <style>
+        body { margin: 0; font-family: sans-serif; background: #121212; color: white; display: flex; height: 100vh; }
+        
+        /* Video Section */
+        #video-container { flex: 3; display: flex; justify-content: center; align-items: center; border-right: 1px solid #333; }
+        iframe { width: 100%; height: 100%; border: none; }
+
+        /* Sidebar (Chat & Controls) */
+        #sidebar { flex: 1; display: flex; flex-direction: column; background: #1e1e1e; min-width: 300px; }
+        
+        #chat-window { flex-grow: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+        .msg { padding: 5px 10px; background: #333; border-radius: 4px; font-size: 14px; }
+        .sys-msg { color: #888; font-size: 12px; text-align: center; }
+
+        #controls { padding: 15px; background: #252525; border-top: 1px solid #333; }
+        input { width: 65%; padding: 8px; background: #333; border: none; color: white; border-radius: 4px; }
+        button { width: 30%; padding: 8px; cursor: pointer; background: #e50914; color: white; border: none; border-radius: 4px; }
+        
+        .input-group { margin-bottom: 10px; display: flex; justify-content: space-between; }
+    </style>
+</head>
+<body>
+
+    <div id="video-container">
+        <div id="player"></div>
+    </div>
+
+    <div id="sidebar">
+        <div id="chat-window"></div>
+        
+        <div id="controls">
+            <div class="input-group">
+                <input type="text" id="videoUrl" placeholder="Paste YouTube Link">
+                <button onclick="changeVideo()">Play</button>
+            </div>
+            
+            <div class="input-group">
+                <input type="text" id="chatInput" placeholder="Type message...">
+                <button onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script>
+        const socket = io();
+        
+        // 1. Room Logic
+        // URL se room ID uthao (eg: localhost:3000/#myroom)
+        let roomId = window.location.hash ? window.location.hash.substring(1) : 'room1';
+        window.location.hash = roomId;
+        
+        let username = prompt("Apna naam batayein:") || "User" + Math.floor(Math.random()*100);
+        socket.emit('join-room', roomId, username);
+
+        // 2. YouTube Player Setup
+        var player;
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                videoId: 'jfKfPfyJRdk', // Default Video
+                playerVars: { 'autoplay': 1, 'controls': 1 },
+                events: { 'onStateChange': onPlayerStateChange }
+            });
+        }
+
+        function onPlayerStateChange(event) {
+            // 1=Play, 2=Pause
+            if (event.data == 1) {
+                socket.emit('sync-action', { roomId, action: 'play', time: player.getCurrentTime() });
+            } else if (event.data == 2) {
+                socket.emit('sync-action', { roomId, action: 'pause' });
+            }
+        }
+
+        // 3. Socket Listeners (Server se signals)
+        socket.on('sync-action', (data) => {
+            if (data.action === 'play') {
+                let diff = Math.abs(player.getCurrentTime() - data.time);
+                if(diff > 1) player.seekTo(data.time); // Agar time gap jyada hai to sync karo
+                player.playVideo();
+            } else if (data.action === 'pause') {
+                player.pauseVideo();
+            }
+        });
+
+        socket.on('change-video', (id) => {
+            player.loadVideoById(id);
+        });
+
+        socket.on('receive-message', (data) => {
+            const chatWin = document.getElementById('chat-window');
+            const div = document.createElement('div');
+            div.className = data.user === 'System' ? 'sys-msg' : 'msg';
+            div.innerText = data.user === 'System' ? data.msg : `${data.user}: ${data.msg}`;
+            chatWin.appendChild(div);
+            chatWin.scrollTop = chatWin.scrollHeight;
+        });
+
+        // 4. User Actions
+        function changeVideo() {
+            let url = document.getElementById('videoUrl').value;
+            let videoId = "";
+            // Link se ID nikalne ka logic
+            if (url.includes("v=")) videoId = url.split('v=')[1].split('&')[0];
+            else if (url.includes("youtu.be/")) videoId = url.split('youtu.be/')[1].split('?')[0];
+
+            if(videoId) {
+                socket.emit('change-video', { roomId, videoId });
+                document.getElementById('videoUrl').value = "";
+            }
+        }
+
+        function sendMessage() {
+            let msg = document.getElementById('chatInput').value;
+            if(msg.trim()) {
+                socket.emit('send-message', { roomId, user: username, msg });
+                document.getElementById('chatInput').value = "";
+            }
+        }
+    </script>
+</body>
+</html>
