@@ -6,146 +6,217 @@ const path = require('path');
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Room Data Structure:
-// rooms[roomId] = { host: 'userId123', allowed: ['userId123', 'userId456'] }
+// Data Structures
+// rooms[roomId] = { 
+//   host: 'userId', 
+//   allowed: [], 
+//   playlist: [], 
+//   users: [], 
+//   currentVideoTitle: '', 
+//   requests: [] 
+// }
 let rooms = {};
 
-// Socket ID se User ID map karne ke liye (Reverse Lookup)
-let socketToUserMap = {}; 
-// User ID se Socket ID dhundne ke liye (Messaging ke liye)
+// Maps for Persistent Identity (Refresh Fix)
+let socketToUserMap = {};
 let userToSocketMap = {};
 
 io.on('connection', (socket) => {
-    console.log('User connected:', socket.id);
+    // console.log('User connected:', socket.id);
 
-    // --- JOIN ROOM (Updated Logic with UserID) ---
-    // Ab hum sirf roomId aur username nahi, balki 'userId' bhi receive karenge
+    // --- JOIN ROOM ---
     socket.on('join-room', (roomId, username, userId) => {
         socket.join(roomId);
         socket.username = username;
-        socket.userId = userId; // Socket object me ID save kar lo for easy access
-        
-        // Maps update karo taaki hum track kar sakein kaunsa socket kiska hai
+        socket.userId = userId;
+        socket.roomId = roomId;
+
+        // Maps update karo (Refresh fix ke liye)
         socketToUserMap[socket.id] = userId;
         userToSocketMap[userId] = socket.id;
 
-        // 1. Agar Room nahi hai -> Create karo (Ye user HOST hai)
+        // Room Initialization
         if (!rooms[roomId]) {
-            rooms[roomId] = { host: userId, allowed: [userId] };
+            rooms[roomId] = {
+                host: userId,
+                allowed: [userId],
+                playlist: [],
+                users: [],
+                currentVideoTitle: "Waiting for video...",
+                requests: [] // Pending Hand Raises
+            };
             socket.emit('role-update', { role: 'Host' });
-            console.log(`Room created: ${roomId} by Host: ${username}`);
-        } 
-        // 2. Agar Room hai aur ye banda HOST hai (Refresh karke wapas aaya hai)
+        }
+        // Agar Room hai aur ye banda HOST hai (Refresh karke wapas aaya hai)
         else if (rooms[roomId].host === userId) {
             socket.emit('role-update', { role: 'Host' });
-            console.log(`Host returned: ${username}`);
+            // Host ko pending requests wapas bhejo
+            socket.emit('update-requests', rooms[roomId].requests);
         }
-        // 3. Agar Room hai aur ye banda allowed list me hai (Co-Host)
+        // Agar Co-Host hai
         else if (rooms[roomId].allowed.includes(userId)) {
             socket.emit('role-update', { role: 'Co-Host' });
         }
-        // 4. Normal User -> Viewer
+        // Normal Viewer
         else {
             socket.emit('role-update', { role: 'Viewer' });
             
-            // Host ko bolo naye bande ko time/video detail bheje
-            const hostUserId = rooms[roomId].host;
-            const hostSocketId = userToSocketMap[hostUserId];
-            
-            // Agar Host online hai, tabhi usse signal maango
+            // Naye user ko sync karo (Host se state maango)
+            const hostId = rooms[roomId].host;
+            const hostSocketId = userToSocketMap[hostId];
             if(hostSocketId) {
                 io.to(hostSocketId).emit('get-current-state', { newSocketId: socket.id });
             }
         }
 
-        socket.to(roomId).emit('receive-message', { user: 'System', msg: `${username} ne join kiya.` });
+        // Add user to active list (Online Count ke liye)
+        // Check karo ki duplicate na ho
+        const existingUserIndex = rooms[roomId].users.findIndex(u => u.id === userId);
+        if (existingUserIndex !== -1) {
+            rooms[roomId].users[existingUserIndex].name = username; // Update name logic
+        } else {
+            rooms[roomId].users.push({ id: userId, name: username });
+        }
+
+        // UPDATE EVERYONE (Sabko naya data bhejo)
+        io.in(roomId).emit('update-user-list', rooms[roomId].users.length);
+        io.in(roomId).emit('update-playlist', rooms[roomId].playlist);
+        io.in(roomId).emit('update-title', rooms[roomId].currentVideoTitle);
+        
+        socket.to(roomId).emit('receive-message', { user: 'System', msg: `${username} joined.` });
     });
 
-    // --- HELPER FUNCTION: Permission Check ---
-    function canControl(roomId, userId) {
-        if (!rooms[roomId]) return false;
-        return rooms[roomId].allowed.includes(userId);
-    }
-
-    // --- VIDEO CHANGE (Strictly Allowed Only) ---
-    socket.on('change-video', (data) => {
-        // Permission Check: User ID use karo, Socket ID nahi
-        if (canControl(data.roomId, socket.userId)) {
-            io.in(data.roomId).emit('change-video', data.videoId);
+    // --- PLAYLIST LOGIC ---
+    socket.on('add-to-playlist', (data) => {
+        if(rooms[data.roomId]) {
+            const videoItem = {
+                id: data.videoId,
+                title: data.title || `Video ${data.videoId}`,
+                thumbnail: `https://img.youtube.com/vi/${data.videoId}/mqdefault.jpg`
+            };
+            rooms[data.roomId].playlist.push(videoItem);
             
-            io.in(data.roomId).emit('receive-message', { 
-                user: 'System', 
-                msg: 'Video change kiya gaya hai.' 
-            });
-        } else {
-            console.log("Unauthorized change attempt by:", socket.username);
+            // Sabko playlist update bhejo
+            io.in(data.roomId).emit('update-playlist', rooms[data.roomId].playlist);
+
+            // Agar playlist me ye pehla video hai, toh turant play karo
+            if(rooms[data.roomId].playlist.length === 1) {
+                rooms[data.roomId].currentVideoTitle = videoItem.title;
+                io.in(data.roomId).emit('change-video', { videoId: data.videoId, title: videoItem.title });
+                io.in(data.roomId).emit('update-title', videoItem.title);
+            }
         }
     });
 
-    // --- SYNC LOGIC (Play/Pause is Personal, Sync on request) ---
-    
-    // 1. Viewer Play dabata hai -> Host se Time maango
+    // --- VIDEO CHANGE & PERMISSIONS ---
+    socket.on('change-video', (data) => {
+        // Permission Check using UserID
+        if (rooms[data.roomId] && rooms[data.roomId].allowed.includes(socket.userId)) {
+            rooms[data.roomId].currentVideoTitle = data.title || "Playing Video";
+            
+            io.in(data.roomId).emit('change-video', data);
+            io.in(data.roomId).emit('update-title', rooms[data.roomId].currentVideoTitle);
+            
+            io.in(data.roomId).emit('receive-message', { 
+                user: 'System', 
+                msg: `Video changed: ${data.title}` 
+            });
+        }
+    });
+
+    // --- SYNC LOGIC ---
     socket.on('request-host-time', (roomId) => {
         if(rooms[roomId]) {
             const hostUserId = rooms[roomId].host;
             const hostSocketId = userToSocketMap[hostUserId];
-            
             if (hostSocketId) {
                 io.to(hostSocketId).emit('provide-time-for-viewer', { requesterId: socket.id });
             }
         }
     });
 
-    // 2. Host time bhejta hai -> Viewer ko forward karo
     socket.on('host-sends-time', (data) => {
         io.to(data.requesterId).emit('jump-to-live', data.time);
     });
 
-    // 3. Initial Sync (Jab koi naya aata hai)
     socket.on('send-current-state', (data) => {
         io.to(data.targetSocketId).emit('sync-state-on-join', data);
     });
 
-    // --- HAND RAISE & APPROVAL ---
+    // --- HAND RAISE SYSTEM (Accept/Deny Logic) ---
     socket.on('request-control', (roomId) => {
         if (rooms[roomId]) {
             const hostUserId = rooms[roomId].host;
             const hostSocketId = userToSocketMap[hostUserId];
             
             if(hostSocketId) {
-                io.to(hostSocketId).emit('control-request', { id: socket.userId, name: socket.username });
+                // Request list me add karo
+                const request = { id: socket.userId, name: socket.username };
+                
+                // Duplicate check
+                if (!rooms[roomId].requests.some(r => r.id === request.id)) {
+                    rooms[roomId].requests.push(request);
+                    // Host ko nayi list bhejo
+                    io.to(hostSocketId).emit('update-requests', rooms[roomId].requests);
+                }
             }
         }
     });
 
     socket.on('grant-control', (data) => {
-        // Data: { roomId, targetUserId, targetName }
+        // Data: { roomId, targetUserId, targetName, action: 'accept' | 'deny' }
         if (rooms[data.roomId] && rooms[data.roomId].host === socket.userId) {
-            // Allowed list mein User ID add karo
-            rooms[data.roomId].allowed.push(data.targetUserId);
             
-            // Us user ko batao ki wo Co-Host ban gaya
-            const targetSocketId = userToSocketMap[data.targetUserId];
-            if (targetSocketId) {
-                io.to(targetSocketId).emit('role-update', { role: 'Co-Host' });
+            // Request list se hatao
+            rooms[data.roomId].requests = rooms[data.roomId].requests.filter(r => r.id !== data.targetUserId);
+            
+            // Agar ACCEPT kiya hai
+            if (data.action === 'accept') {
+                rooms[data.roomId].allowed.push(data.targetUserId);
+                
+                const targetSocketId = userToSocketMap[data.targetUserId];
+                if (targetSocketId) {
+                    io.to(targetSocketId).emit('role-update', { role: 'Co-Host' });
+                }
+                
+                io.in(data.roomId).emit('receive-message', { 
+                    user: 'System', 
+                    msg: `${data.targetName} is now a Co-Host.` 
+                });
             }
             
-            io.in(data.roomId).emit('receive-message', { 
-                user: 'System', 
-                msg: `${data.targetName} ko video control mil gaya hai.` 
-            });
+            // Host ko updated list wapas bhejo (taaki naam list se hatt jaye)
+            socket.emit('update-requests', rooms[data.roomId].requests);
         }
     });
 
-    // --- CHAT (Sabke liye open) ---
+    // --- CHAT ---
     socket.on('send-message', (data) => {
         io.in(data.roomId).emit('receive-message', data);
     });
-    
+
     // --- DISCONNECT ---
     socket.on('disconnect', () => {
-        // Optional: Clean up maps if needed, but keeping them allows reconnects
-        // console.log('User disconnected');
+        const roomId = socket.roomId;
+        const userId = socket.userId;
+
+        if(roomId && rooms[roomId]) {
+            // User list se remove karo
+            rooms[roomId].users = rooms[roomId].users.filter(u => u.id !== userId);
+            
+            // Request list se remove karo (agar pending tha)
+            rooms[roomId].requests = rooms[roomId].requests.filter(r => r.id !== userId);
+
+            // Updates bhejo
+            io.in(roomId).emit('update-user-list', rooms[roomId].users.length);
+
+            // Agar Host online hai, usse request list update bhejo
+            const hostId = rooms[roomId].host;
+            const hostSocketId = userToSocketMap[hostId];
+            if(hostSocketId) {
+                io.to(hostSocketId).emit('update-requests', rooms[roomId].requests);
+            }
+        }
     });
 });
 
